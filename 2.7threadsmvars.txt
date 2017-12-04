@@ -1,0 +1,65 @@
+Part II.
+Concurrent Haskell
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    ch7-9 threads and communication
+    ch10 STM
+    ch11 higher abstractions
+    ch12 network concurrency
+    ch13 parallelism using concurrency
+    ch14 distributed programs
+    ch15 debugging and performance
+
+II.7 threads, mvars
+────────────────────────────────────────────────
+forkIO :: IO () -> IO ThreadId
+    the IO () computation passed to forkIO is executed in
+    a new thread running concurrently
+threadDelay :: Int -> IO ()
+    waits _ microseconds before returning
+a haskell program terminates when main returns,
+    even if there are other threads still running
+
+mvars are the basic communication mechanism between threads
+data MVar a
+
+newEmptyMVar :: IO (MVar a)
+newMVar      :: a -> IO (MVar a)
+takeMVar     :: MVar a -> IO a
+putMVar      :: MVar a -> a -> IO ()
+
+takeMVar removes and returns the value a from a full MVar 
+    but blocks if the MVar is currently empty
+putMVar similarly puts a value into the MVar but blocks if already full
+
+the RTS can detect when a blocked MVar operation is forever deadlocked,
+    throwing exception BlockedIndefinitelyOnMVar
+
+mvars can be 
+1. used as a simple message channel between two threads, or MPSC
+    but it can hold at most one message at a time
+2. a container for shared mutable state
+    making complex operations behave atomically to other threads
+3. building blocks for larger concurrent datastructures
+    e.g. using mvar to build fully buffered channels
+
+takeMVar acquires a lock and putMVar releases it (or viceversa, consistently)
+    ...an MVar with a dummy value such as () can act as a lock on
+    external state, that is not a hs datastructure, such as a file
+
+take care when making concurrent operations atomic, we would like to both
+    release the lock as soon as possible          (being lazy)
+    prevent space leaks from storing many thunks  (being eager)
+    these can be accomplished jointly by proper use of $! / seq
+
+fairness
+ghc uses a round-robin thread scheduler,
+    guarantees no thread is starved indefinitely
+    does not guarantee an equal CPU share
+mvars implement the fairness guarantee (no indefinite block)
+    by keeping a FIFO queue of currently blocked threads,
+    waking and executing the blocked operation is a single atomic operation,
+    property of single wakeup between many contending blocked threads
+
+────────────────────────────────────────────────
+II.8 overlapping io
+

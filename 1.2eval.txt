@@ -1,0 +1,126 @@
+Part I.
+Parallel Haskell
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    ch2 eval monad
+    ch3 eval strategies
+    ch4 par monad
+    ch5 repa
+    ch6 accelerate
+
+I.2 eval monad
+────────────────────────────────────────────────
+:sprint prints value of an expression without causing evaluation
+where _ indicates unevaluation or a "thunk"
+
+seq x () evaluates x then returns ()
+seq evaluates its argument only as far as to whnf
+
+Control.Parallel.Strategies provides Eval monad
+two operations
+    rpar :: a -> Eval a
+    rseq :: a -> Eval a
+the argument a should be a thunk, and will go to whnf
+    rpar creates paralelism "my argument can evaluate in parallel"
+    rseq forces sequentialism "evaluate and wait for the result"
+the Eval monad provides
+    runEval :: Eval a -> a
+e.g.
+runEval $ do
+    a <- rpar $ f x
+    b <- rpar $ f y
+    return (a,b)
+(returns thunk immediately without waiting for a or b to finish)
+or
+runEval $ do
+    a <- rpar $ f x
+    b <- rseq $ f y
+    rseq a
+    return (a,b)
+(waits for a and b to finish before returning evaluated thunk)
+which is equivalent to
+runEval $ do
+    a <- rpar $ f x
+    b <- rpar $ f y
+    rseq a
+    rseq b
+    return (a,b)
+
+profiling with threadscope
+> stack ghc -- -O2 -threaded -eventlog -rtsopts rpar.hs
+> ./rpar 1 +RTS -N2 -s -ls -lf
+> threadscope rpar.eventlog
+
+see also, performance profiling with ghc-events-analyze
+threadscope is meant for parallel programs (multiple cores/HEC)
+ghc-events-analyze works also for otherwise concurrent programs (single core/HEC)
+
+as' <- rpar (force (map solve as))
+Control.DeepSeq(force) evaluates the entire structure of its argument,
+reducing to normal form, rather than just whnf
+force :: NFData a => a -> a
+NFData is roughly the class of types that can be evaluated to nf
+it is important to evaluate deeply enough when using rpar
+(cf. the Par monad, where force is the default behavior)
+
+large chunks of thunks rarely contain an equal amount of cpu work
+thus it is preferable to divide into many small chunks of thunks,
+in excess of the number of execution contexts (HEC) available, because
+sparks are collected in a pool and sourced to a free core by work stealing
+where the argument to rpar is called a 'spark'
+sparks are very cheap to create, rpar writes a pointer to the expression
+i.e. ghc distributes units of work at runtime through dynamic partitioning
+
+created sparks can either be
+     converted: run, successfully parallel
+    overflowed: dropped, spark pool is full
+           dud: ignored, expression already evaluated
+          GC'd: removed, sparked expression unused by program
+       fizzled: removed, sparked expression became evaluated by other means
+
+evaluate :: a -> IO a
+evaluate in the IO monad is like a seq in the eval monad
+it evaluates and returns its argument a in whnf
+
+amdahl's law gives the maximum speedup as the ratio
+msr(P,N) = 1 / ((1-P) + P/N)
+where P is the portion of program parallelizable 
+and   N is the number of processors available
+
+as N increases, even small (1-P) can dramatically limit max speedup
+similarly for moderate P, large N approaches 1/(1-P), i.e.
+    msr(0.99,100) ≅ 50       msr(0.50, 64) ≅  1.97
+    msr(0.99, 64) ≅ 39       msr(0.50, 32) ≅  1.94
+    msr(0.98, 64) ≅ 28       msr(0.50, 16) ≅  1.88
+    msr(0.97, 64) ≅ 22       msr(0.50,  8) ≅  1.77
+    msr(0.90, 64) ≅  8       msr(0.50,  4) ≅  1.6
+    msr(0.50, 64) ≅  2       msr(0.50,  2) ≅  1.33
+
+recall Control.DeepSeq(force, NFData)
+    force :: NFData a => a -> a
+    class NFData a where
+        rnf :: a -> ()
+        rnf a = a `seq` ()
+rnf reduces data a to normal form,
+(for data structures containing fns, ∃ an NFData instance evaluating to whnf)
+the default rnf is convenient for types that lack substructure
+defining NFData instances for your own data types
+    data Tree a = Empty | Branch (Tree a) a (Tree a)
+    instance NFData a => NFData (Tree a) where
+        rnf Empty = ()
+        rnf (Branch l a r) = rnf l `seq` rnf a `seq` rnf r
+in contrast to seq
+    deepseq :: NFData a => a -> b -> b
+    deepseq a b = rnf a `seq ` b
+    force :: NFData a => a -> a
+    force x = x `deepseq` x
+if force x evaluates to WHNF, then x will be evaluated to NF
+
+keep in mind seq is O(1),
+whereas force traverses the whole structure, being O(n)
+
+finally Control.Seq (from the parallel package) provides combinators
+composing to evaluate data to degrees between whfn and nf
+
+────────────────────────────────────────────────
+I.3 eval strategies
+

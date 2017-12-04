@@ -1,0 +1,16 @@
+Part I.
+Parallel Haskell
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    ch2 eval monad
+    ch3 eval strategies
+    ch4 par monad
+    ch5 repa
+    ch6 accelerate
+
+I.3 eval strategies
+────────────────────────────────────────────────
+
+
+────────────────────────────────────────────────
+I.4 par monad
+

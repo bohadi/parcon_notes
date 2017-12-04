@@ -1,0 +1,41 @@
+parcon haskell
+
+A parallel program is one that uses a multiplicity of computational
+resources to perform a computation more quickly, by delegating
+different parts to different processors executing at the same time.
+
+Concurrency is a program-structuring technique in which there are
+multiple threads of control. A concurrent program may execute on
+a single processor in an interleaved way, or on multiple processors.
+
+So parallelism concerns efficiency, and concurrency structure.
+
+Concurrency is inherently effectful, being at odds with purely
+functional programs, that means Haskell code in the IO monad.
+
+Furthermore, concurrency is necessarily nondeterministic,
+interacting with external agents. By contrast, we should prefer
+deterministic parallel models where possible.
+
+Last, programs may mix both parallelism and concurrency effectively.
+
+Part I.
+Parallel Haskell
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    ch2 eval monad
+    ch3 eval strategies
+    ch4 par monad
+    ch5 repa
+    ch6 accelerate
+
+Part II.
+Concurrent Haskell
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    ch7-9 threads and communication
+    ch10 STM
+    ch11 higher abstractions
+    ch12 network concurrency
+    ch13 parallelism using concurrency
+    ch14 distributed programs
+    ch15 debugging and performance
+
