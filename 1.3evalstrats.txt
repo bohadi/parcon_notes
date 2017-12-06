@@ -10,7 +10,98 @@ Parallel Haskell
 I.3 eval strategies
 ────────────────────────────────────────────────
 
+strategies are means for modularizing parallel code
+    separate algorithm from the parallelism
+
+>parameterized strategies
+type Strategy a = a -> Eval a
+
+parPair :: Strategy (a,b)
+parPair (a,b) = do
+    a' <- rpar a
+    ab <- rpar b
+    return (a',b')
+
+evalPair :: Strategy a -> Strategy b -> Strategy (a,b)
+evalPair sa sb (a,b) = do
+    a' <- sa ab
+    b' <- sb 
+    return (a',b')
+
+parPair :: Strategy (a,b)
+parPair = evalPair rpar rpar
+
+rpar :: Strategy a
+
+rdeepseq :: NFData a => Strategy a
+rdeepseq x = rseq (force x)
+
+rparWith :: Strategy a -> Strategy a
+
+parPair :: Strategy a -> Strategy b -> Strategy (a,b)
+parPair sa sb = evalPair (rparWith sa) (rparWith sb)
+
+each component is fully evaluated to nf in parallel
+    parPair rdeepseq rdeepseq ::
+        (NFData a, NFData b) => Strategy (a,b)
+
+dont evaluate this component at all
+    r0 :: Strategy a
+    r0 x = return x
+
+>a strategy parallelizing a list
+parMap :: (a -> b) -> [a] -> [b]
+parMap f xs = map f xs `using` parList rseq
+
+evalList :: Strategy a -> Strategy [a]
+evalList strat []     = return []
+evalList strat (x:xs) = do
+    x'  <- strat x
+    xs' <- evalList strat xs
+    return (x':xs')
+
+parList :: Strategy a -> Strategy [a]
+parList strat = evalList (rparWith strat)
+
+>k means example performance analysis
+find the right chunk granularity
+avoid io in parallel sections
+
+>gc'd sparks and speculative parallelism
+prefer using to runEval
+bind / evaluate result / arg  of rpar and rparWith
+
+>parBuffer, parallelizing lazy streams
+(rsa example)
+parBuffer :: Int -> Strategy a -> Strategy [a]
+parBuffer has similar type to parList but takes an Int as a buffer size
+in contrast to parList which eagerly creates a spark for every element,
+parBuffer creates N sparks, keeping this supply constant as consumed
+    in addition to speedup, parBuffer can reduce memory overhead,
+        reducing space leaks from thunks
+
+>chunking strategies
+parListChunk is a version of parList with chunking built in
+parListChunk :: Int -> Strategy a -> Strategy [a]
+parListChunk can be useful with list of too many elements to spark each,
+    or when the individual elements are too cheap for a spark each
+
+the spark pool has fixed size,
+    dropped sparks are reported as overflowed by +RTS -s
+this is an indication to create fewer sparks,
+    potentially by replacing parList with parListChunk
+
+>the id property
+x `using` s
+is equivalent in to just
+x
+when the Strategy s returns value equal to what it was passed
+Control.Parallel.Strategies satisfy this property,
+    but user-def may not (as in monad laws)
+a caveat, x using s may be less defined e.g.
+    print $ snd ((1 `div` 0, "hello")
+    print $ snd ((1 `div` 0, "hello") `using` rdeepseq)
 
 ────────────────────────────────────────────────
-I.4 par monad
+I.4 dataflow parallelism: par monad
 
