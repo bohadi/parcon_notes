@@ -1,0 +1,18 @@
+Part II.
+Concurrent Haskell
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    ch7-9 threads and communication
+    ch10 STM
+    ch11 higher abstractions
+    ch12 network concurrency
+    ch13 parallelism using concurrency
+    ch14 distributed programs
+    ch15 debugging and performance
+
+II.9 cancellation and timeouts
+────────────────────────────────────────────────
+
+
+────────────────────────────────────────────────
+II.10 STM
+
