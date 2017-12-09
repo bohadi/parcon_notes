@@ -51,6 +51,10 @@ take care when making concurrent operations atomic, we would like to both
     prevent space leaks from storing many thunks  (being eager)
     these can be accomplished jointly by proper use of $! / seq
 
+readMVar is similar to takeMVar but does not leave the MVar empty
+on wait readMVar is guaranteed to receive the next putMVar
+unlike takeMVar, readMVar is multiple wakeup, e.g. multiple readers
+
 fairness
 ghc uses a round-robin thread scheduler,
     guarantees no thread is starved indefinitely

@@ -11,7 +11,97 @@ Concurrent Haskell
 
 II.8 overlapping io
 ────────────────────────────────────────────────
+data Async a = Async (MVar a)
+async :: IO a -> IO (Async a)
+async action = do
+    var <- newEmptyMVar
+    forkIO (do r <- action; putMVar var r)
+    return (Async var)
+wait :: Async a -> IO a
+wait (Async var) = readMVar var
 
+throw :: Exception e => e -> a
+class (Typeable e, Show e) => Exception e where  --Control.Exception
+...
+newtype ErrorCall = ErrorCall String
+    deriving (Typeable)
+instance Show ErrorCall where { ... }
+instance Exception ErrorCall
+
+error :: String -> a      --Prelude
+error s = throw (ErrorCall s)
+
+catch :: Exception e => IO a -> (e -> IO a) -> IO a
+    args IO operation to perform, exception handler
+    if op throws exception of the type expected,
+    execute the handler passing the exception value
+
+e.g.
+(use :set -XDeriveDataTypeable for automatic derive)
+    import Control.Exception
+    import Data.Typeable
+    :set -XDeriveDataTypeable 
+    data ExException = ExException deriving (Show, Typeable)
+    instance Exception ExException
+    throw ExException `catch` \e -> print (e :: ExException)
+SomeException is at the top of the type heirarchy for
+all exc types, if we want to catch any exception use
+    throw (ErrorCall "oops") `catch` \e -> print (e :: SomeException)
+
+variants to catch
+try :: Exception e => IO a -> IO (Either e a)
+    e.g.
+    try (readFile "nonexistent") :: IO (Either IOException String)
+handle :: Exception e => (e -> IO a) -> IO a -> IO a
+    e.g.
+    handle (\e -> ...) $ do ...
+onException :: IO a -> IO b -> IO a
+onException io what = io `catch` \e -> do _ <- what throwIO (e::SomeEx)
+    (throwIO is just throw specialized for use in the IO monad,
+     guaranteeing strict ordering, it is always better to use)
+bracket :: IO a -> (a -> IO b) -> (a -> IO c) -> IO c
+    e.g.
+    bracket (newTempFile "temp") (\f -> removeFile f) (\f -> ...)
+bracket before after during = do
+    a <- before
+    c <- during a `onException` after a
+    after a
+    return c
+finally :: IO a -> IO b -> IO a
+    (a special case of bracket)
+finally io after = do
+    io `onException` after
+    after
+    
+now we can redefine async to handle deadlock and exceptions gracefully
+
+data Async a = Async (MVar (Either SomeException a))
+
+async :: IO a -> IO (Async a)
+async action = do
+    var <- newEmptyMVar
+    forkIO (do r <- try action; putMVar var r)
+    return (Async var)
+waitCatch :: Async a -> IO (Either SomeException a)
+waitCatch (Async var) = readMVar var
+wait :: Async a -> IO a
+wait a = do
+    r <- waitCatch a
+    case r of
+      Left e  -> throwIO e
+      Right e -> return a
+
+merging pattern for several events
+e.g. dl multiple urls, perform action as soon as first is done
+put each of separate actions into same MVar
+
+this can be generalized to
+waitAny :: [Async a] -> IO a
+waitAny as = do
+    m <- newEmptyMVar
+    let forkwait a = forkIO $ do r <- try (wait a); putMVar m r
+    mapM_ forkwait as
+    wait (Async m)
 
 ────────────────────────────────────────────────
 II.9 cancellation and timeouts
