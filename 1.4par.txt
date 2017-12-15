@@ -9,6 +9,196 @@ Parallel Haskell
 
 I.4 dataflow parallelism: par monad
 ────────────────────────────────────────────────
+newtype Par a
+instance Applicative Par
+instance Monad Par
+
+runPar :: Par a -> a
+fork :: Par () -> Par ()
+
+data IVar a
+new :: Par (Ivar a)
+put :: NFData => IVar a -> a -> Par ()
+get :: IVar a -> Par a
+
+IVar is similar to MVar, except it can be written (put) only once
+if get reads an empty IVar, it waits for a put
+in other languages IVar might be called future or promise
+
+IVars are created and used within the same runPar,
+    breaking this assumption could lead to errors
+
+fork and IVars allow the construction of dataflow networks
+e.g. runPar $ do
+         i <- new
+         j <- new
+         fork (put i (fib n))
+         fork (put j (fib m))
+         a <- get i
+         b <- get j
+         return (a+b)
+
+spawn :: NFData a => Par a -> Par (IVar a)      (Control.Monad.Par)
+spawn p = do
+    i <- new
+    fork (do x <- p; put i x)
+    return i
+
+parMapM :: NFData b => (a -> Par b) -> [a] -> Par [b]
+parMapM f as = do
+    bs <- mapM (spawn . f) as
+    mapM get bs
+
+(note f is monadic in Par, cf)
+
+parMap :: NFData b => (a -> b) -> [a] -> Par [b]
+parMap f as = do
+    bs <- mapM (spawn . return . f) as
+    mapM get bs
+
+put calls deepseq on the value in IVar
+put_ evalues to WHNF only, use if we know arg is already fully eval'd
+
+pipeline parallelism
+we might have a pipeline computation that looks like
+producer -> mapper -> consumer
+when the pipeline maintains state, exploiting par is hard, ow
+we would like each stage to run on a separate core, w/ data b/w
+
+data IList a = Nil
+             | Cons a (IVar (IList a))
+type Stream a = IVar (IList a)
+
+streamFromList :: NFData => [a] -> Par (Stream a)
+streamFromList xs = do
+    var <- new
+    fork $ loop xs var
+    return var
+  where loop [] var = put var Nil
+        loop (x:xs) var = do
+            tail <- new
+            put var (Cons x tail)
+            loop xs tail
+streamFold :: (a -> b -> a) -> a -> Stream b -> Par a
+streamFold fn !acc instrm = do
+    ilst <- get instrm
+    case ilst of
+      Nil      -> return acc
+      Cons h t -> streamFold fn (fn acc h) t
+streamMap :: NFData b => (a -> b) -> Stream a -> Par (Stream b)
+streamMap fn instrm = do
+    outstrm <- new
+    fork $ loop instrm outstrm
+    return outstrm
+  where loop instrm outstrm = do
+            ilst <- get instrm
+            case ilst of
+                Nil      -> put outstrm Nil
+                Cons h t -> do
+                    newtl <- new
+                    put outstrem (Cons (fn h) newtl)
+                    loop t newtl
+e.g. see rsa-pipeline.hs
+in this example, we chunk a bytestring to encrypt then decrypt
+the encryption stage is about 2x as long, giving a 1.5 speedup
+suppose the consumer (decrypt) was faster, then we would like
+to rate limit producer in order to avoid a large heap buildup
+data IList a = Nil
+               | Cons a (IVar (IList a))
+               | Fork (Par ()) (IList a)
+the idea is that fork will be called by the consumer to start
+production of the next chunk, e.g. an initial fork at 100 elements
+and fork distance of 200 would mean b/w 100 and 300 element buffer
+
+(this ex shows we cannot produce a lazy stream from runPar,
+ bc returning an IVar isnt an option
+ ParIO can be lazy but is not deterministic)
+
+pipeline par' is less effective in general than data par'
+
+examples
+1) shortest paths in a graph
+2) conference timetable
+3) parallel type inference
+
+1. floyd-warshall finds lengths of shortest paths
+    b/w all node pairs in a weighted directed graph
+
+shortestPath :: Graph -> Vertex -> Vertex -> Vertex -> Weight
+shortestPath g i j 0 = weight g i j
+shortestPath g i j k = min
+    (shortestPath g i j (k-1) )
+    (shortestPath g i k (k-1) + shortestPath g k j (k-1) )
+
+intuitively, sP g i j k passes through vert up to the kth only
+when k = 0, we only consider direct edges
+for k >0, the sP either uses vertex k or not, min of these
+
+we can memoize this algorithm, storing sP for all pairs k=1,2...
+where each step is O(n²) in vertices, for total O(n³)
+
+assuming a dense graph we use an adjacency matrix,
+assuming a sparse graph we use a 2 layer map
+type Graph = IntMap (IntMap Weight)
+weight :: Graph -> Vertex -> Vertex -> Maybe Weight
+weight g i j = do
+    jmap <- Map.lookup i g
+    Map.lookup j jmap
+
+sP :: [Vertex] -> Graph -> Graph
+sP vs g = foldl' update g vs where
+  update g k = Map.mapWithKey shortmap g where
+    shortmap :: Vertex -> IntMap Weight -> IntMap Weight
+    shortmap i jmap = foldr shortest Map.empty vs where
+      shortest j m = case (old, new) of
+          (Nothing, Nothing) -> m
+          (Nothing, Just w)  -> Map.insert j w m
+          (Just w, Nothing)  -> Map.insert j w m
+          (Just w1, Just w2) -> Map.insert j (min w1 w2)  m
+        where old = Map.lookup j jmap
+              new = do w1 <- weight g i k
+                       w2 <- weight g k j
+                       return (w1+w2)
+sP is three nested loops
+    outermost is a leftfold with iteration dependency, cant par'
+    (folds may par' only when the folded op is associative)
+    the middle loop, a map, can be par'd:
+        update g k = runPar $ do
+            m <- Map.traverseWithKey (\i jmap ->
+                    spawn (return (shortmap i jmap)) ) g
+            traverse get m
+
+2. find a valid conference timetable
+   T tracks, with S talks each,
+   each attendee has talks they wish to see
+   never schedule 2 preferred talks simultaneously
+we can incrementally build up the time table
+this has the structure of a tree, where branches are
+independent, that means parallelizable divide-and-conquer
+
+3. parallel type inference
+the dataflow model works well even when structure of the
+parallelism is dependent on the input and cannot be predicted
+
+
+
+using different schedulers
+monad-par comes with two schedulers, Trace and Direct
+defaults to direct, but to try Trace on a given problem, use
+    import Control.Monad.Par.Scheds.Trace
+    -- instead of Control.Monad.Par
+
+Par monad cf Strategies
+
+if your algorithm naturally produces a lazy data structure
+    a Strategy will work well, else use Par
+runPar is relatively expensive, runEval is free
+    particularly, nested calls to runPar perform poorly
+strategies allow more separation between the algo and par'
+eval performs better at finer granularities
+par is implemented entirely as a library so is easier to modify
+eval has more diagnostics available in threadscope
+par does not support speculative parallelism (always executed)
 
 
 ────────────────────────────────────────────────
